@@ -1,0 +1,15 @@
+
+services:
+  cups:
+    build: .
+    container_name: cups-server
+    ports:
+      - "631:631"
+    volumes:
+      - ./config:/etc/cups
+      - ./ppds:/usr/share/cups/model
+      - cups-data:/var/spool/cups
+    restart: unless-stopped
+
+volumes:
+  cups-data:
