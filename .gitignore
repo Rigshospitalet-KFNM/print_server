@@ -209,4 +209,4 @@ __marimo__/
 
 #Docker related files
 *.O
-config/printers.conf
+printers.conf
