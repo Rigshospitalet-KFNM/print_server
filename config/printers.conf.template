@@ -1,0 +1,16 @@
+<Printer william>
+Info William Printer
+Location Kontorgang 3982
+DeviceURI socket://172.16.70.238:9100
+State Idle
+Accepting Yes
+Shared Yes
+</Printer>
+
+<Printer maria>
+Info Produktionsgang printer
+DeviceURI socket://193.3.238.133:9100
+State Idle
+Accepting Yes
+Shared Yes
+</Printer>

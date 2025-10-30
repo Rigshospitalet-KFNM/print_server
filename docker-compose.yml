@@ -6,7 +6,7 @@ services:
     ports:
       - "631:631"
     volumes:
-      - ./config:/etc/cups
+      - ./data:/data 
       - ./ppds:/usr/share/cups/model
       - cups-data:/var/spool/cups
     restart: unless-stopped

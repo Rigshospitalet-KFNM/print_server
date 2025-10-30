@@ -1,14 +1,20 @@
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y cups cups-client cups-filters ghostscript
+RUN apt-get update && apt-get install -y cups cups-client cups-filters ghostscript && apt-get clean
 
-# Copy config
+# Copy static config templates
 COPY config/cupsd.conf /etc/cups/cupsd.conf
-COPY config/printers.conf /etc/cups/printers.conf
+COPY config/printers.conf.template /etc/cups/printers.conf
 
-#COPY ppds/ /usr/share/cups/model/ #Add later
+# Create writable runtime dirs
+RUN mkdir -p /data/cups && chown -R lp:lp /data
+
+# Tell CUPS where to store runtime state
+ENV CUPS_DATADIR=/data/cups
 
 EXPOSE 631
-VOLUME ["/var/spool/cups", "/etc/cups", "/usr/share/cups/model"]
+
+# Persist job + spool data only (not config)
+VOLUME ["/var/spool/cups"]
 
 CMD ["cupsd", "-f"]
