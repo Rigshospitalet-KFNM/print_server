@@ -1,4 +1,3 @@
-
 services:
   cups:
     build: .
@@ -6,9 +5,23 @@ services:
     ports:
       - "631:631"
     volumes:
-      - ./data:/data 
+      - ./config:/etc/cups
       - ./ppds:/usr/share/cups/model
       - cups-data:/var/spool/cups
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: print-api
+    ports:
+      - "8000:8000"
+    environment:
+      - CUPS_HOST=cups
+      - CUPS_PORT=631
+    depends_on:
+      - cups
     restart: unless-stopped
 
 volumes:
