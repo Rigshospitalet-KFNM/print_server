@@ -1,0 +1,238 @@
+import re
+import subprocess
+import tempfile
+from typing import Optional, Union
+from .objects import Printer, Job
+from pathlib import Path
+
+'''
+base broker service using subprocesses to talk to CUPS, 
+backwards compatipable with older versions of CUPS.
+Currently hardcoded to talk to hopper's old printing server
+if possible use the newer and more stable pycups_broker.
+'''
+class CupsCLIService:
+    def __init__(self, host="hopper.petnet.rh.dk:631/version=1.1"):
+        self.host = host
+    
+    def list_printers(self):
+        raw_text = self._run_lpstat()
+        return self._parse_printers(raw_text)
+    
+    def list_jobs(self, printer: Optional[str] = None) -> list[Job]:
+        """
+        List print jobs.
+        If `printer` is given, only list jobs for that printer.
+        """
+        cmd = ["lpstat", "-h", self.host, "-o"]
+        if printer:
+            cmd.append(printer)
+
+        raw = subprocess.check_output(cmd, text=True)
+        return self._parse_jobs(raw)
+    
+    def print(self, printer_name: str, content: Union[str, Path], number: int = 1, user: Optional[str] = None):
+        """
+        Print either a string (raw text) or a file (Path or string path).
+        """
+        try:
+            path = Path(content) if not isinstance(content, Path) else content
+
+            if path.exists():
+                output = self._print_file(printer_name, str(path), number, user)
+            else:
+                output = self._print_text(printer_name, str(content), number, user)
+            return {"success": True, "message": output}
+        except RuntimeError as e:
+            return {"success": False, "message": str(e)}
+    
+    def safe_print(self, printer: Printer, content: Union[str, Path], number: int = 1, user: Optional[str] = None):
+        """
+        Print either a string (raw text) or a file (Path or string path).
+        Checks if printer is reachable before sending job, prevents cluddering inactive printers with jobs
+        """
+        
+        if not printer.is_reachable():
+            return {"success": False, "message": "Printer unreachable"}
+
+        try:
+            path = Path(content) if not isinstance(content, Path) else content
+
+            if path.exists():
+                output = self._print_file(printer.name, str(path), number, user)
+            else:
+                output = self._print_text(printer.name, str(content), number, user)
+            return {"success": True, "message": output}
+        except RuntimeError as e:
+            return {"success": False, "message": str(e)}
+
+
+    #subprocesses-----------
+
+    #printing
+    def _print_file(self, printer_name: str, file_path: str, number: int = 1, user: Optional[str] = None):
+        cmd = ["lp", "-h", self.host, "-d", printer_name, "-n", str(number)]
+        if user:
+            cmd.extend(["-U", user])
+        cmd.append(file_path)
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Print failed: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    def _print_text(self, printer_name: str, text: str, number: int = 1, user: Optional[str] = None):
+        # Write text to a temporary file and print
+        with tempfile.NamedTemporaryFile("w+", delete=False) as tmp:
+            tmp.write(text)
+            tmp.flush()
+            return self._print_file(printer_name, tmp.name, number, user)
+
+
+    #query printers
+    def _run_lpstat(self):
+        result = subprocess.run(
+            ["lpstat", "-h", self.host, "-l", "-v", "-p"],
+            capture_output=True
+        )
+    
+        return result.stdout.decode("latin-1") #Should be UTF-8 but hopper is too old
+
+
+    #parsing
+    def _parse_printers(self, raw_text: str) -> dict[str, Printer]:
+        printers: dict[str, Printer] = {}
+        device_map: dict[str, str] = {}
+
+        pattern_device = re.compile(
+            r"device for (\S+):\s+(\S+)"
+        )       
+
+        pattern_enabled = re.compile(
+            r"(?:printer )?(\S+)\s+(?:is\s+(\w+)|now printing (\S+))\. +enabled since (.+)"        
+        )
+        pattern_disabled = re.compile(
+            r"(?:printer )?(\S+) disabled since (.+?) -$"
+        )
+
+        current_block: list[str] = []
+
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            
+            # First check for device lines
+            match_device = pattern_device.match(line)
+            if match_device:
+                name, uri = match_device.groups()
+                device_map[name] = uri
+                continue
+
+            # Check if line starts a new printer
+            if pattern_enabled.match(line) or pattern_disabled.match(line):
+                if current_block:
+                    printer = self._parse_block(current_block, pattern_enabled, pattern_disabled)
+                    if printer:
+                        printers[printer.name] = printer
+                        # attach device_uri if known
+                        printer.device_uri = device_map.get(printer.name)
+                current_block = [line]
+            else:
+                current_block.append(line)
+
+        # Process the last block
+        if current_block:
+            printer = self._parse_block(current_block, pattern_enabled, pattern_disabled)
+            if printer:
+                printers[printer.name] = printer
+                printer.device_uri = device_map.get(printer.name)
+
+        return printers
+
+    # parser helper function
+    def _parse_block(self, block_lines: list[str], pattern_enabled, pattern_disabled) -> Printer | None:
+        header = block_lines[0]
+        details = block_lines[1:]
+
+        # parse header
+        match_enabled = pattern_enabled.match(header)
+        match_disabled = pattern_disabled.match(header)
+
+        printer: Printer | None = None
+
+        if match_enabled:
+            name = match_enabled.group(1)
+            status_word = match_enabled.group(2)
+            job_id = match_enabled.group(3)
+            since = match_enabled.group(4)
+
+            if job_id:
+                status = "printing"
+                current_job = job_id
+            else:
+                status = status_word
+                current_job = None
+
+            printer = Printer(
+                name=name.strip(),
+                status=status,
+                enabled=True,
+                since=since,
+                current_job=current_job,
+            )
+        elif match_disabled:
+            name, since = match_disabled.groups()
+            printer = Printer(
+                name=name.strip(),
+                status="disabled",
+                enabled=False,
+                since=since,
+                description=None,
+                location=None,
+                error=None,
+            )
+
+        if printer is None:
+            return None  # skip invalid blocks
+
+        # parse details
+        for line in details:
+            line = line.strip()
+            if line.startswith("Description:"):
+                printer.description = line.split(":", 1)[1].strip()
+            elif line.startswith("Location:"):
+                printer.location = line.split(":", 1)[1].strip()
+            elif "error" in line.lower() or line.startswith("/"):
+                printer.error = line
+
+        return printer
+    
+    #query jobs
+    def _parse_jobs(self, raw_text: str) -> list[Job]:
+        """
+        Parse `lpstat -o` output into Job objects.
+        Example line:
+          maria-7391   alice   1024   Fri 01 Jan 1970 01:00:00 CET
+        """
+        jobs: list[Job] = []
+        pattern = re.compile(
+            r"(?P<printer>\S+)-(?P<id>\d+)\s+"
+            r"(?P<user>\S+)\s+"
+            r"(?P<size>\d+)\s+"
+            r"(?P<submitted>.+)"
+        )
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            match = pattern.match(line)
+            if match:
+                jobs.append(Job(
+                    id=match.group("id"),
+                    printer=match.group("printer"),
+                    user=match.group("user"),
+                    size=match.group("size"),
+                    submitted=match.group("submitted"),
+                ))
+        return jobs
