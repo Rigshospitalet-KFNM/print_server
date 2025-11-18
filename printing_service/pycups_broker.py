@@ -1,7 +1,7 @@
 import cups #Dependency
 from pathlib import Path
 from typing import Optional, Union
-from printing_Service.objects import Printer, Job 
+from printing_service.objects import Printer, Job 
 
 '''
 More mordern broker using pycups -> dependency

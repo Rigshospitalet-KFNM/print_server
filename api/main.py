@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from printing_Service import CupsPyService
+from printing_service import CupsPyService
 
 app = FastAPI(title="CUPS API Server")
 
