@@ -7,7 +7,8 @@ WORKDIR /app
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api /app
+COPY api/ .               
+COPY ../printing_service/ ./printing_service/  
 
 EXPOSE 8000
 

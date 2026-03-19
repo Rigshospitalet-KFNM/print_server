@@ -3,7 +3,7 @@ services:
     build: .
     container_name: cups-server
     ports:
-      - "631:631"
+      - "8631:631"
     volumes:
       - ./config:/etc/cups
       - ./ppds:/usr/share/cups/model
